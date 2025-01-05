@@ -1,0 +1,280 @@
+---
+title: "Synergistic Neural Circuits for Novelty and Goal-Directed Behavior in the Human Brain"
+author: "Blake L. Elliott"
+output:
+  pdf_document: default
+  word_document: default
+date: "2024-04-29"
+---
+# Methods
+See Elliott et al., 2024 (doi: https://doi.org/10.1101/2024.12.16.628816)
+https://www.biorxiv.org/content/10.1101/2024.12.16.628816v1.abstract
+
+##Participants
+Participants were recruited for this experiment as healthy control subjects in a larger study examining psychosis risk. The final sample with usable task data and structural scans included 77 healthy, right handed participants. Informed consent was obtained from each participant in a manner approved by Temple University’s Institutional Review Board.
+Procedure
+The protocol and materials used in this experiment were based on previously published work (Murty et al., 2013, 2017). In brief, the task involved two phases: a familiarization phase and a novelty exposure phase (Figure 2). Before scanning, participants completed the familiarization phase in which 120 outdoor scene images were shown one at a time while participants completed a continuous recognition task. 80 of the scene images were repeated 6 times (“familiar”), while 40 were presented just once (foils), with the repetition aimed at familiarizing participants with these 80 stimuli. 
+Approximately 20 minutes later, participants entered the MRI scanner for the novelty exposure phase. During this phase participants viewed a sequence of outdoor scene images, including novel images that had never been seen before, as well as the familiar images seen previously during the familiarization phase (Figure 2). In the novelty exposure phase, participants completed a target detection task in which they were instructed to press a button every time a specific outdoor scene image ("target") was presented. The target scene image was repeated 40 times, intermixed with the 80 novel scene images and 80 familiar scene images. All trials were presented in a randomized order.
+
+
+``` {r, include= FALSE, echo=FALSE}
+  # Load necessary libraries
+if (!require("pacman")) install.packages("pacman")
+library(pacman)
+pacman::p_load("rio", "tidyverse", "ggstatsplot", "GGally", "purrr", "Hmisc", "corrplot","stats","lme4","dplyr","ggplot2","coefplot","car","performance","lavaan")
+```
+
+# fMRI Data Analysis
+
+Detailed procedures and analysis methods for the fMRI data were employed to ensure rigorous and reproducible results. fMRI data were analyzed using AFNI version 24.0.06.
+Univariate Analysis During Novelty Exposure Task
+To measure BOLD response during the novelty exposure phase of the task, we computed a GLM with regressors for each condition (novel, familiar, target) for each block (40 of each). A block was defined as the trials preceding a target (Figure 2). Individual events were convolved with a double-gamma hemodynamic response (HDR) function. Noise-related measures were also added as additional nuisance regressors. Noise-related measures were computed for average signal in CSF and white matter masks (generated using FSL’s FAST segmentation tool), time points of excessive head motion (identified using FSL’s motion outliers tool), as well as the six head motion parameters and their first derivatives. The resulting contrasts were registered to standard MNI space, from which we then extracted the b parameters from each condition, (e.g., novel, familiar, target greater than baseline) for each block, for each participant. We examined univariate responses across our ROIs of interest, in the hippocampus, VTA, and limbic striatum, and dlPFC regions.
+
+
+``` {r Novelty Signals Predicting Target VTA}
+require(lmerTest)
+
+MAP_Data <- read.csv(".../Novelty_Data.csv")
+
+# Create a new dataframe by selecting columns that start with "Novel"
+novel_columns <- grep("^Novel", names(MAP_Data), value = TRUE)
+
+# Drop rows with NA in these columns
+MAP_Data_NoNA <- MAP_Data[complete.cases(MAP_Data[ , novel_columns]), ]
+
+#Analysis 1: Novelty_Ant_HPC predict Target VTA, Novelty_dlPFC predicting Target VTA
+basemodel <- lmer(Target_VTA ~ 1 + (1 | Subject), data = MAP_Data_NoNA)
+HPC_regression <- lmer(Target_VTA ~  Novel_HPC + (1 | Subject), data = MAP_Data_NoNA)
+summary(HPC_regression)
+anova(basemodel, HPC_regression)
+
+
+#Analysis 2: Effect of Adding NAc
+HPC_Limbic_fullregression <- lmer(Target_VTA ~ Novel_Limbic + Novel_HPC +(1 | Subject), data = MAP_Data_NoNA)
+summary(HPC_Limbic_fullregression)
+anova(HPC_regression, HPC_Limbic_fullregression)
+
+plot_ALL_HPC_Novelty <- coefplot(HPC_Limbic_fullregression)
+# Modify y-axis labels
+plot_ALL_HPC_Novelty <- plot_ALL_HPC_Novelty +
+  scale_y_discrete(labels = c("(Intercept)", "Novelty Limbic", "Novelty HPC")) +
+  theme(text = element_text(size = 28)) +
+  theme_bw(base_size = 28) +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01))
+
+print(plot_ALL_HPC_Novelty)
+
+coefs <- data.frame(coef(summary(HPC_regression)))
+
+fm1 <- lmer("Target_VTA ~ Novel_HPC + (1 | Subject)", data = MAP_Data_NoNA)
+
+x = sjPlot::plot_model(fm1, type="eff", xlim =-1, ylim(-0.5, 0.5), colors = "green") + theme_bw(base_size = 24)+
+  labs(x = "Hippocmapus Novelty Activation", y = "VTA Target Activation")
+x = x + ylim(-0.1, 0.2)
+print(x)
+```
+
+``` {r Target Signaling Analysis}
+#Analysis 3: dlPFC Target Activation Predicting VTA Target Activation
+
+# Identify columns that start with "Target"
+target_columns <- grep("^Target", names(MAP_Data), value = TRUE)
+
+# Drop rows with NA in these columns only
+MAP_Data_NoNA_Target <- MAP_Data[complete.cases(MAP_Data[ , target_columns]), ]
+
+
+#dlPFC regression
+basemodel <- lmer(Target_VTA ~ 1 + (1 | Subject), data = MAP_Data_NoNA_Target)
+dlPFC_regression <- lmer(Target_VTA ~  Target_dlPFC + (1 | Subject), data = MAP_Data_NoNA_Target)
+summary(dlPFC_regression)
+anova(basemodel, dlPFC_regression)
+
+dlPFC_plot <- lmer("Target_VTA ~ Target_dlPFC + (1 | Subject)", data = MAP_Data_NoNA_Target)
+x <- sjPlot::plot_model(dlPFC_plot, type="eff", xlim =-1) + theme_bw(base_size = 24) +
+  labs(x = "dlPFC Target Activation", y = "VTA Target Activation")
+x = x + xlim(-1, 1) + ylim(-0.1, 0.2)
+print(x)
+
+```
+
+``` {r Permutation Tests for Preceding Novelty}
+#Analysis 4
+set.seed(23)
+
+shuffled_data <- MAP_Data_NoNA %>%
+  group_by(Subject) %>%
+  mutate(Novel_HPC_shuffled = sample(Novel_HPC))
+
+HPC_regression <- lmer(Target_VTA ~  Novel_HPC_shuffled + (1 | Subject), data = shuffled_data)
+summary(HPC_regression)
+
+
+# Initialize an empty dataframe to store t-values
+t_values_df <- data.frame(iteration = integer(), t_value = numeric())
+
+# Set the number of iterations
+num_iterations <- 1000
+
+# Start the loop
+for (i in 1:num_iterations) {
+  # Shuffle the data
+  shuffled_data <- MAP_Data_NoNA %>%
+    group_by(Subject) %>%
+    mutate(Novel_HPC_shuffled = sample(Novel_HPC))
+  
+  # Fit the linear mixed-effects model
+  HPC_regression <- lmer(Target_VTA ~ Novel_HPC_shuffled + (1 | Subject), data = shuffled_data)
+  
+  # Extract the t-value for the coefficient of interest
+  t_value <- summary(HPC_regression)$coefficients["Novel_HPC_shuffled", "t value"]
+  
+  # Store the iteration number and t-value in the dataframe
+  t_values_df <- rbind(t_values_df, data.frame(iteration = i, t_value = t_value))
+}
+
+# Calculate the confidence interval for the t-values
+t_value_ci <- quantile(t_values_df$t_value, c(0.025, 0.975))
+
+# Print the confidence interval
+print(t_value_ci)
+
+# Create histogram data
+h <- hist(t_values_df$t_value, breaks = 20, plot = FALSE)
+
+# Create ggplot object
+ggplot(data.frame(x = h$breaks[-length(h$breaks)], y = h$counts), aes(x = x, y = y)) +
+  geom_bar(stat = "identity", fill = "gray") +
+  labs(
+    title = "Permutation Test Distribution",
+    x = "t-value",
+    y = "Frequency"
+  ) +
+  geom_vline(xintercept = 2.54, linetype = "dashed", color = "red", size = 2) + # Adjusted line position
+  scale_x_continuous(limits = c(-3, 3), breaks = seq(-3, 3, by = 1)) + # Adjusted x-axis limits
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 16),
+    plot.title = element_text(size = 16),
+    axis.line = element_line(color = "black", size = 0.5),
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.ticks = element_line(size = 2)  # Adjust tick size
+  )
+
+```
+
+``` {r Permutation Tests for Target Signaling}
+#Analysis 5
+#dlPFC
+set.seed(23)
+# Initialize an empty dataframe to store t-values
+t_values_df_dlpfc <- data.frame(iteration = integer(), t_value = numeric())
+
+# Set the number of iterations
+num_iterations <- 1000
+
+# Start the loop
+for (i in 1:num_iterations) {
+  # Shuffle the data
+  shuffled_data_dlpfc <- MAP_Data_NoNA_Target %>%
+    group_by(Subject) %>%
+    mutate(Target_dlPFC_shuffled = sample(Target_dlPFC))
+  
+  # Fit the linear mixed-effects model
+  dlPFC_regression_s <- lmer(Target_VTA ~ Target_dlPFC_shuffled + (1 | Subject), data = shuffled_data_dlpfc)
+  
+  # Extract the t-value for the coefficient of interest
+  t_value <- summary(dlPFC_regression_s)$coefficients["Target_dlPFC_shuffled", "t value"]
+  
+  # Store the iteration number and t-value in the dataframe
+  t_values_df <- rbind(t_values_df, data.frame(iteration = i, t_value = t_value))
+}
+
+# Calculate the confidence interval for the t-values
+t_value_ci <- quantile(t_values_df$t_value, c(0.025, 0.975))
+
+# Print the confidence interval
+print(t_value_ci)
+
+# Create histogram data
+h <- hist(t_values_df$t_value, breaks = 20, plot = FALSE)
+
+# Create ggplot object
+ggplot(data.frame(x = h$breaks[-length(h$breaks)], y = h$counts), aes(x = x, y = y)) +
+  geom_bar(stat = "identity", fill = "gray") +
+  labs(
+    title = "Permutation Test Distribution",
+    x = "t-value",
+    y = "Frequency"
+  ) +
+  geom_vline(xintercept = 2.54, linetype = "dashed", color = "red", size = 2) + # Adjusted line position
+  scale_x_continuous(limits = c(-3, 3), breaks = seq(-3, 3, by = 1)) + # Adjusted x-axis limits
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 16),
+    plot.title = element_text(size = 16),
+    axis.line = element_line(color = "black", size = 0.5),
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.ticks = element_line(size = 2)  # Adjust tick size
+  )
+```
+
+``` {r Independence of Hippocampal Novelty and Goal-directed PFC Circuits}
+#Analysis 6
+# Load the car package for VIF calculation
+library(car)
+require(lmerTest)
+
+dl_HPC_regression <- lmer(Target_VTA ~  Novel_HPC + Target_dlPFC + (1 | Subject), data = MAP_Data_NoNA)
+# Calculate VIF for the multiple regression model
+vif_values <- vif(dl_HPC_regression)
+print(vif_values)
+
+# Fit the mixed-effects model
+full_model <- lmer(Target_VTA ~ Novel_HPC + Target_dlPFC + (1 | Subject), data = MAP_Data_NoNA)
+
+# View model summary
+summary(full_model)
+# Fit reduced models
+model_without_Novel_HPC <- lmer(Target_VTA ~ Target_dlPFC + (1 | Subject), data = MAP_Data_NoNA)
+model_without_Target_dlPFC <- lmer(Target_VTA ~ Novel_HPC + (1 | Subject), data = MAP_Data_NoNA)
+
+# Likelihood ratio test: Full model vs. model without Novel_HPC
+anova(model_without_Novel_HPC, full_model)
+
+# Likelihood ratio test: Full model vs. model without Target_dlPFC
+anova(model_without_Target_dlPFC, full_model)
+
+
+```
+
+
+``` {r Hippocmapal Long-Axis Specificity}
+#Analysis 7: Effect of Adding Posterior HPC
+base <- lmer(Target_VTA ~  1 + (1 | Subject), data = MAP_Data_NoNA)
+post <- lmer(Target_VTA ~  Novel_HPC_Post + (1 | Subject), data = MAP_Data_NoNA)
+HPC_regression <- lmer(Target_VTA ~  Novel_HPC + (1 | Subject), data = MAP_Data_NoNA)
+HPC_PostRegression <- lmer(Target_VTA ~ Novel_HPC + Novel_HPC_Post + (1 | Subject), data = MAP_Data_NoNA)
+summary(HPC_PostRegression)
+summary(post)
+anova(base, post)
+anova(HPC_PostRegression, HPC_regression)
+```
+
+
+``` {r Specific versus Relative Novelty Analysis}
+#Analysis 8: Fam_Ant_HPC predict Target VTA
+MAP_Data_NoNA <- na.omit(MAP_Data_NoNA)
+basemodel <- lmer(Target_VTA ~ 1 + (1 | Subject), data = MAP_Data_NoNA)
+HPC_regression <- lmer(Target_VTA ~  Novel_HPC + (1 | Subject), data = MAP_Data_NoNA)
+Fam_HPC_regression <- lmer(Target_VTA ~  Fam_HPC + (1 | Subject), data = MAP_Data_NoNA)
+NovFam_HPC_Reg <- lmer(Target_VTA ~  Fam_HPC + Novel_HPC + (1 | Subject), data = MAP_Data_NoNA)
+summary(Fam_HPC_regression)
+anova(NovFam_HPC_Reg, HPC_regression)
+```
